@@ -1,0 +1,6 @@
+*.zip binary
+*.sig binary
+*.png binary
+*.ico binary
+*.dll binary
+download/latest.txt -text
