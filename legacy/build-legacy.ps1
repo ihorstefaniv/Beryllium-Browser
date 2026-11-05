@@ -1,23 +1,40 @@
-# Builds Beryll Legacy (Windows 7 / 8 / 8.1, 32-bit engine: runs on 32- and 64-bit Windows).
-#   powershell -ExecutionPolicy Bypass -File legacy\build-legacy.ps1
-# Output: dist\Beryll-Legacy\  and  dist\Beryll-Legacy-x86.zip
+# Builds Beryll Legacy for Windows 7 / 8 / 8.1.
+#   powershell -ExecutionPolicy Bypass -File legacy\build-legacy.ps1            (both)
+#   powershell -ExecutionPolicy Bypass -File legacy\build-legacy.ps1 -Arch x64
+# x86: 32-bit engine, runs on 32- and 64-bit Windows, least memory (netbooks, <= 3 GB RAM).
+# x64: 64-bit engine for 64-bit Windows with 4 GB+ RAM (needs SSE3).
+# Output: dist\Beryll-Legacy-<arch>.zip  (folder "Beryll-Legacy" inside)
 #
 # Engine and uBlock Origin versions are pinned below together with their SHA-256: the build stops if a
 # downloaded file differs (a swapped / damaged release never gets packed). To update: change version + hash.
+param([ValidateSet('x86', 'x64', 'all')][string]$Arch = 'all')
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+if ($Arch -eq 'all') {
+    foreach ($a in 'x86', 'x64') {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Arch $a
+        if ($LASTEXITCODE -ne 0) { throw "Legacy $a build failed" }
+    }
+    return
+}
+
 $EngineTag  = 'v150-r2.02'
-$EngineZip  = 'supermium_150_32_nonsetup.zip'
-$EngineSha  = '00677d17795044f490c4bc83afa49ff5e66626793432c544dd91efff91af2bc5'
+$Engines = @{
+    x86 = @{ Zip = 'supermium_150_32_nonsetup.zip'; Sha = '00677d17795044f490c4bc83afa49ff5e66626793432c544dd91efff91af2bc5' }
+    x64 = @{ Zip = 'supermium_150_64_nonsetup.zip'; Sha = '50498112ed7107df9ec3b59794850eff5a9c08918895308bcb529171a5e9a007' }
+}
+$EngineZip  = $Engines[$Arch].Zip
+$EngineSha  = $Engines[$Arch].Sha
 $UboVersion = '1.75.4'
 $UboSha     = '26ad8697a7b19e1ef5f4c0750165dd585cbc7707c72dbc3f3a0bdbcd712f3576'
 
 $here  = $PSScriptRoot
 $root  = Split-Path $here
 $cache = Join-Path $here '.cache'
-$out   = Join-Path $root 'dist\Beryll-Legacy'
+$stageRoot = Join-Path $root "dist\legacy-$Arch"
+$out   = Join-Path $stageRoot 'Beryll-Legacy'
 New-Item -ItemType Directory -Force $cache | Out-Null
 
 function Get-Pinned($url, $file, $sha) {
@@ -40,7 +57,7 @@ New-Item -ItemType Directory -Force $out, "$out\engine", "$out\ext" | Out-Null
 
 # ------------------------------------------------------------------ engine (Supermium, BSD licence like Chromium)
 $ez = Get-Pinned "https://github.com/win32ss/supermium/releases/download/$EngineTag/$EngineZip" $EngineZip $EngineSha
-$ex = Join-Path $cache "engine-$EngineTag-x86"
+$ex = Join-Path $cache "engine-$EngineTag-$Arch"
 if (-not (Test-Path "$ex\Supermium\chrome.exe")) {
     if (Test-Path $ex) { Remove-Item $ex -Recurse -Force }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -121,14 +138,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Shell build failed' }
 </configuration>
 '@ | Set-Content "$out\Beryll.exe.config" -Encoding UTF8
 
-Copy-Item "$here\README-Legacy.txt" "$out\README.txt"   # ASCII name: the Windows 7 zip folder garbles non-ASCII file names -Force
+# ASCII file name (the Windows 7 zip folder garbles non-ASCII names); UTF-8 with BOM so Windows 7 Notepad shows Cyrillic
+$readme = [IO.File]::ReadAllText("$here\README-Legacy.txt", [Text.Encoding]::UTF8) -replace '\{ARCH\}', $Arch
+[IO.File]::WriteAllText("$out\README.txt", $readme, (New-Object Text.UTF8Encoding $true))
 Copy-Item "$root\LICENSE" "$out\LICENSE.txt" -Force
 
 # ------------------------------------------------------------------ zip
-$zip = Join-Path $root 'dist\Beryll-Legacy-x86.zip'
+$zip = Join-Path $root "dist\Beryll-Legacy-$Arch.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($out, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
 $mb = [Math]::Round((Get-Item $zip).Length / 1MB, 1)
 $disk = [Math]::Round(((Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB, 0)
-Write-Host "OK: $zip  ($mb MB zip, $disk MB unpacked)"
+$zsha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+[IO.File]::WriteAllText("$zip.sha256", "$zsha  Beryll-Legacy-$Arch.zip`n")
+Write-Host "OK: $zip  ($mb MB zip, $disk MB unpacked)  sha256 $zsha"

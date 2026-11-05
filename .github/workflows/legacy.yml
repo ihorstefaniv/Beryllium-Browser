@@ -1,0 +1,56 @@
+# Beryll Legacy (Windows 7 / 8 / 8.1): builds the x86 and x64 packages from source on GitHub's runner and
+# publishes them as a GitHub Release (the packages are ~150-170 MB, too big to keep in git).
+# Engine (Supermium) and uBlock Origin are downloaded with pinned SHA-256, see legacy/build-legacy.ps1.
+# Release: push a tag, e.g.  git tag legacy-v1.0 && git push origin legacy-v1.0
+name: legacy
+
+on:
+  push:
+    tags: ['legacy-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Beryll Legacy x86 + x64
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File legacy/build-legacy.ps1
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: Beryll-Legacy
+          path: |
+            dist/Beryll-Legacy-*.zip
+            dist/Beryll-Legacy-*.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish release
+        if: ${{ startsWith(github.ref, 'refs/tags/legacy-v') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#legacy-v}"
+          {
+            echo "Beryll Legacy $ver для Windows 7 / 8 / 8.1 (рушій Supermium, сучасний Chromium)."
+            echo
+            echo "- **Beryll-Legacy-x86.zip**: будь-яка Windows 7/8, ПК з 2–3 ГБ пам'яті (нетбуки, Atom)"
+            echo "- **Beryll-Legacy-x64.zip**: 64-бітна Windows, 4 ГБ пам'яті й більше"
+            echo
+            echo "Розпакуйте повністю й запустіть Beryll.exe. Встановлювати нічого не треба."
+            echo
+            echo "SHA-256:"
+            echo '```'
+            cat dist/Beryll-Legacy-*.zip.sha256
+            echo '```'
+          } > notes.md
+          gh release create "$tag" dist/Beryll-Legacy-x86.zip dist/Beryll-Legacy-x64.zip dist/Beryll-Legacy-*.zip.sha256 \
+            --title "Beryll Legacy $ver (Windows 7 / 8)" --notes-file notes.md

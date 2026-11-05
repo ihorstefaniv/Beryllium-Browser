@@ -13,16 +13,16 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("Ihor Stefaniv")]
 [assembly: AssemblyProduct("Beryll Browser")]
 [assembly: AssemblyCopyright("© 2026 Ihor Stefaniv with AI Claude · MIT")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
-[assembly: AssemblyInformationalVersion("1.1.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyInformationalVersion("1.2.0")]
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 
 namespace Beryll
 {
     static class Program
     {
-        public const string Version = "1.1";
+        public const string Version = "1.2";
 
         [DllImport("kernel32.dll")] static extern bool SetDefaultDllDirectories(uint flags);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr AddDllDirectory(string dir);
