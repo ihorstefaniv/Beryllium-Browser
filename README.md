@@ -103,21 +103,42 @@ Beryll робить три речі:
 ## Windows Defender і SmartScreen
 Beryll нічого не ховає: без драйверів, служб, автозапуску й прав адміністратора; встановлюється в профіль користувача.
 SmartScreen може показати «Windows захистила ваш ПК» лише тому, що exe ще **не має цифрового підпису** і
-малопоширений: «Докладніше» → «Виконати все одно». План: безкоштовний підпис для open source
-(SignPath Foundation), а також надсилання файлів у Microsoft (https://www.microsoft.com/wdsi/filesubmission)
-як «хибне спрацювання», якщо Defender колись позначить файл.
+малопоширений: «Докладніше» → «Виконати все одно». Підпис коду через SignPath Foundation (безкоштовно для open source)
+у процесі — див. [docs/SIGNING.md](docs/SIGNING.md).
+
+## Політика підпису коду
+<!-- Після схвалення SignPath розкоментувати:
+Безкоштовний підпис коду надає [SignPath.io](https://about.signpath.io), сертифікат — [SignPath Foundation](https://signpath.org).
+-->
+- Підписуються лише файли, зібрані з цього репозиторію на GitHub Actions ([build.yml](.github/workflows/build.yml)).
+- Автори й рецензенти коду: [Ihor Stefaniv](https://github.com/ihorstefaniv). Затверджує кожен підпис: Ihor Stefaniv.
+- Сторонні бінарні файли в архіві — лише Microsoft WebView2 SDK, підписаний самою Microsoft.
+- Обидва підписи — Authenticode на `Beryll.exe` і RSA-підпис архіву оновлення — мають збігатися,
+  інакше Beryll оновлення не встановить.
+
+## Приватність
+Beryll не має акаунтів, телеметрії й аналітики. Історія, закладки й налаштування лежать лише на вашому ПК
+(`%LOCALAPPDATA%\Beryll`, або в папці `Data` біля exe в portable-режимі). Сам Beryll звертається в мережу лише так:
+- **перевірка оновлень** — раз на добу читає `download/latest.txt` з GitHub (вимикається в Налаштуваннях);
+- **uBlock Origin Lite** — одноразове завантаження з GitHub, лише якщо ви його увімкнули;
+- **значки сайтів** — `favicon` запитується в того самого сайту, який є у ваших закладках чи історії.
+
+Рушій Microsoft Edge WebView2 має вбудований захист Microsoft Defender SmartScreen: адреси небезпечних сторінок
+перевіряються в Microsoft, як у Edge. Пошукові запити йдуть до пошуковика, який ви обрали.
 
 ## Обмеження
 - Апаратні токени КЕП, яким потрібне розширення браузера, можуть не працювати
   (файлові ключі й хмарні КЕП, зокрема Дія.Підпис, працюють).
 - Немає синхронізації, перекладу сторінок, кількох вікон.
 - Блокування реклами uBlock Origin Lite у базовому режимі ріже мережеві запити, але не ховає порожні рамки.
+
 ## Збірка з коду
 ```
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 Нічого встановлювати не треба: використовується компілятор C#, що є в Windows.
 SDK WebView2 (BSD) лежить у `lib\`. Результат — `dist\Beryll\` і `dist\Beryll-portable.zip`.
+Ця ж збірка автоматично йде на GitHub Actions при кожному push. Історія розробки — [docs/DEVLOG.md](docs/DEVLOG.md).
 
 ## Ліцензія
 MIT — див. [LICENSE](LICENSE). Файли Microsoft WebView2 SDK — за їхньою ліцензією (`lib/WebView2-LICENSE.txt`).
