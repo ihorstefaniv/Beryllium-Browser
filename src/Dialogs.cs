@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -105,7 +105,7 @@ namespace Beryll
                 using (var b = new SolidBrush(search.BackColor)) g.FillPath(b, p);
                 using (var pen = new Pen(search.Focused ? Theme.Beryl : Theme.Border, 1.4f * k)) g.DrawPath(pen, p);
             }
-            TextRenderer.DrawText(g, "", fIcons, new Rectangle(searchR.Left + (int)(14 * k), searchR.Top, (int)(24 * k), searchR.Height), Theme.TextDim, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
+            Glyph.Draw(g, "", fIcons, new Rectangle(searchR.Left + (int)(14 * k), searchR.Top, (int)(24 * k), searchR.Height), Theme.TextDim);
             if (search.Text.Length == 0 && !search.Focused)
                 TextRenderer.DrawText(g, "Пошук у " + Settings.SearchNames[Math.Max(0, Math.Min(3, f.S.Search))].Split(' ')[0] + " або адреса сайту", fUi,
                     new Rectangle(search.Left, searchR.Top, search.Width, searchR.Height), Theme.TextDim, TextFormatFlags.VerticalCenter);
@@ -123,7 +123,7 @@ namespace Beryll
                 string label;
                 if (s.Add)
                 {
-                    TextRenderer.DrawText(g, "", fIcons, circle, Theme.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    Glyph.Draw(g, "", fIcons, circle, Theme.Text);
                     label = "Додати сайт";
                 }
                 else
@@ -143,7 +143,7 @@ namespace Beryll
                     if (h)
                     {
                         if (hoverMenu) using (var b = new SolidBrush(Theme.Hover)) g.FillEllipse(b, s.Menu);
-                        TextRenderer.DrawText(g, "", fIcons, s.Menu, Theme.TextDim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                        Glyph.Draw(g, "", fIcons, s.Menu, Theme.TextDim);
                     }
                 }
                 TextRenderer.DrawText(g, label, fSmall, new Rectangle(s.R.X + (int)(6 * k), circle.Bottom + (int)(10 * k), s.R.Width - (int)(12 * k), (int)(20 * k)), Theme.Text,

@@ -10,6 +10,129 @@ using Microsoft.Win32;
 
 namespace Beryll
 {
+    /// <summary>Icon-font glyphs drawn from their real outline and centred exactly in a box
+    /// (TextRenderer centres the font's line box, which leaves icons visibly off-centre).</summary>
+    static class Glyph
+    {
+        static readonly Dictionary<string, System.Drawing.Drawing2D.GraphicsPath> cache = new Dictionary<string, System.Drawing.Drawing2D.GraphicsPath>();
+
+        public static void Draw(Graphics g, string glyph, Font font, RectangleF box, Color color)
+        {
+            if (string.IsNullOrEmpty(glyph)) return;
+            string key = font.FontFamily.Name + "|" + font.Size + "|" + glyph;
+            System.Drawing.Drawing2D.GraphicsPath p;
+            if (!cache.TryGetValue(key, out p))
+            {
+                p = new System.Drawing.Drawing2D.GraphicsPath();
+                p.AddString(glyph, font.FontFamily, (int)font.Style, font.Size, PointF.Empty, StringFormat.GenericTypographic);
+                RectangleF b = p.GetBounds();
+                using (var m = new System.Drawing.Drawing2D.Matrix()) { m.Translate(-(b.X + b.Width / 2f), -(b.Y + b.Height / 2f)); p.Transform(m); }
+                if (cache.Count > 400) cache.Clear();
+                cache[key] = p;
+            }
+            var state = g.Save();
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+            g.TranslateTransform(box.X + box.Width / 2f, box.Y + box.Height / 2f);
+            using (var br = new SolidBrush(color)) g.FillPath(br, p);
+            g.Restore(state);
+        }
+    }
+
+    /// <summary>Top-level popup that never takes activation or focus. Used for things that sit over web content
+    /// (suggestions, toasts): a child window over WebView2 can leave unpainted (black) remnants, a popup cannot.</summary>
+    class PopupForm : Form
+    {
+        public PopupForm()
+        {
+            FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+        protected override bool ShowWithoutActivation { get { return true; } }
+        protected override CreateParams CreateParams
+        {
+            get { CreateParams cp = base.CreateParams; cp.ExStyle |= 0x08000000 | 0x00000080; cp.ClassStyle |= 0x00020000; return cp; } // NOACTIVATE | TOOLWINDOW, drop shadow
+        }
+        protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Native.RoundCorners(Handle); }
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x0021) { m.Result = (IntPtr)3; return; } // WM_MOUSEACTIVATE -> MA_NOACTIVATE
+            base.WndProc(ref m);
+        }
+    }
+
+    /// <summary>Address-bar suggestions. Never takes focus: typing stays in the address field.</summary>
+    sealed class SuggestPopup : PopupForm
+    {
+        public readonly List<Bookmark> Items = new List<Bookmark>();
+        public int SelectedIndex = -1, ItemHeight = 34, Pad = 4;
+        public Action<Graphics, Rectangle, Bookmark, bool> DrawItem;
+        public Action<int> Picked;
+
+        public Bookmark SelectedItem { get { return SelectedIndex >= 0 && SelectedIndex < Items.Count ? Items[SelectedIndex] : null; } }
+        public void Highlight(int i) { if (i != SelectedIndex) { SelectedIndex = i; Invalidate(); } }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Theme.MenuBg);
+            for (int i = 0; i < Items.Count; i++)
+                if (DrawItem != null) DrawItem(e.Graphics, new Rectangle(0, Pad + i * ItemHeight, Width, ItemHeight), Items[i], i == SelectedIndex);
+            using (var p = new Pen(Theme.Border)) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+        }
+
+        int At(Point p) { if (p.Y < Pad) return -1; int i = (p.Y - Pad) / Math.Max(1, ItemHeight); return i < Items.Count ? i : -1; }
+        protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); Highlight(At(e.Location)); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); Highlight(-1); }
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            int i = At(e.Location);
+            if (i >= 0 && e.Button == MouseButtons.Left && Picked != null) Picked(i);
+        }
+    }
+
+    /// <summary>Short message over the page ("Додано в закладки").</summary>
+    sealed class ToastPopup : PopupForm
+    {
+        public string Msg;
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Color.FromArgb(40, 44, 50));
+            TextRenderer.DrawText(e.Graphics, Msg ?? "", Font, ClientRectangle, Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
+        }
+    }
+
+    /// <summary>WinForms menus close only on clicks that reach our own message loop. Clicks inside the web page go to
+    /// the WebView2 process, so open menus stayed on screen. This watches the mouse while a menu is open.</summary>
+    static class OutsideClick
+    {
+        public static void Watch(ToolStripDropDown menu)
+        {
+            var t = new Timer { Interval = 40 };
+            bool wasDown = Native.MouseDown;   // ignore the click that opened the menu
+            t.Tick += delegate
+            {
+                if (menu.IsDisposed || !menu.Visible) { t.Stop(); t.Dispose(); return; }
+                bool down = Native.MouseDown;
+                if (down && !wasDown && !Inside(menu, Cursor.Position)) menu.Close(ToolStripDropDownCloseReason.AppClicked);
+                wasDown = down;
+            };
+            t.Start();
+        }
+
+        static bool Inside(ToolStripDropDown d, Point p)
+        {
+            if (d.Visible && d.Bounds.Contains(p)) return true;
+            foreach (ToolStripItem it in d.Items)
+            {
+                var mi = it as ToolStripMenuItem;
+                if (mi != null && mi.HasDropDownItems && mi.DropDown.Visible && Inside(mi.DropDown, p)) return true;
+            }
+            return false;
+        }
+    }
+
     static class Native
     {
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
@@ -23,6 +146,10 @@ namespace Beryll
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
         [DllImport("kernel32.dll")] public static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
         [DllImport("shell32.dll")] public static extern void SHChangeNotify(int id, uint flags, IntPtr a, IntPtr b);
+        [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+
+        /// <summary>Is a mouse button (left / right / middle) held down right now — also inside the WebView2 process.</summary>
+        public static bool MouseDown { get { return (GetAsyncKeyState(1) & 0x8000) != 0 || (GetAsyncKeyState(2) & 0x8000) != 0 || (GetAsyncKeyState(4) & 0x8000) != 0; } }
 
         [StructLayout(LayoutKind.Sequential)] public struct MARGINS { public int L, R, T, B; }
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }

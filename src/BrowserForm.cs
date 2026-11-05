@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -28,8 +28,13 @@ namespace Beryll
         readonly Panel content = new Panel();
         readonly NewTabPage ntp;
         readonly TextBox omni = new TextBox();
-        readonly ListBox suggest = new ListBox();
-        readonly Timer governor = new Timer(), spinner = new Timer(), toastTimer = new Timer();
+        readonly SuggestPopup suggest = new SuggestPopup();
+        readonly ToastPopup toastPopup = new ToastPopup();
+        readonly Timer governor = new Timer(), spinner = new Timer(), toastTimer = new Timer(), suggestWatch = new Timer { Interval = 40 };
+        bool suggestWasDown;
+        Rectangle normalBounds;                                   // last "normal" window bounds (WinForms grows the window on restore otherwise)
+        FormWindowState lastState = FormWindowState.Normal;
+        DateTime restoreFixUntil;
         readonly ToolTip tips = new ToolTip();
         string toast;
         int spin;
@@ -69,18 +74,26 @@ namespace Beryll
             omni.BorderStyle = BorderStyle.None;
             omni.KeyDown += OmniKeyDown;
             omni.TextChanged += delegate { if (omni.Focused) ShowSuggestions(); };
-            omni.GotFocus += delegate { omni.BackColor = Theme.OmniFocus; BeginInvoke((MethodInvoker)omni.SelectAll); Invalidate(omniR); };
-            omni.LostFocus += delegate { omni.BackColor = Theme.Omni; if (!suggest.Focused) { suggest.Visible = false; } Invalidate(omniR); };
+            omni.GotFocus += delegate { omni.BackColor = Theme.OmniFocus; BeginInvoke((MethodInvoker)omni.SelectAll); Invalidate(OmniPaintR); };
+            omni.LostFocus += delegate { omni.BackColor = Theme.Omni; if (!suggest.Bounds.Contains(Cursor.Position)) HideSuggest(); Invalidate(OmniPaintR); };
             Controls.Add(omni);
 
-            suggest.Visible = false;
-            suggest.BorderStyle = BorderStyle.FixedSingle;
-            suggest.DrawMode = DrawMode.OwnerDrawFixed;
-            suggest.DrawItem += DrawSuggestion;
-            suggest.MouseClick += delegate { GoSuggestion(); };
-            suggest.IntegralHeight = false;
-            Controls.Add(suggest);
-            suggest.BringToFront();
+            // suggestions and toasts are separate popup windows: as child windows over the web page they could leave black remnants
+            suggest.Owner = this;
+            suggest.DrawItem = DrawSuggestion;
+            suggest.Picked = i => { suggest.SelectedIndex = i; GoSuggestion(); };
+            suggestWatch.Tick += delegate
+            {
+                if (!suggest.Visible) { suggestWatch.Stop(); return; }
+                bool down = Native.MouseDown;
+                if (down && !suggestWasDown)
+                {
+                    Point c = Cursor.Position;
+                    if (!suggest.Bounds.Contains(c) && !RectangleToScreen(omniR).Contains(c)) HideSuggest();
+                }
+                suggestWasDown = down;
+            };
+            toastPopup.Owner = this;
 
             governor.Interval = 4000; governor.Tick += delegate { Govern(); };
             spinner.Interval = 60; spinner.Tick += delegate { spin = (spin + 30) % 360; Invalidate(stripR); };
@@ -148,6 +161,19 @@ namespace Beryll
                         m.Result = (IntPtr)1;
                         return;
                     }
+                case 0x0086: // WM_NCACTIVATE: keep activation, but stop Windows from painting its own frame over our title bar
+                    m.LParam = new IntPtr(-1);
+                    base.WndProc(ref m);
+                    Invalidate(new Rectangle(0, 0, ClientSize.Width, stripH + toolH + barH));
+                    return;
+                case 0x00A0: // WM_NCMOUSEMOVE: over the draggable part of the tab strip — hover / tooltip must follow too
+                    UpdateHover(PointToClient(Cursor.Position));
+                    TrackNcLeave();
+                    break;
+                case 0x02A2: // WM_NCMOUSELEAVE
+                    ncTracking = false;
+                    UpdateHover(PointToClient(Cursor.Position));
+                    break;
                 case 0x02E0: // WM_DPICHANGED
                     {
                         SetScale(((int)((long)m.WParam & 0xFFFF)) / 96f);
@@ -212,7 +238,50 @@ namespace Beryll
                         ? CoreWebView2MemoryUsageTargetLevel.Low : CoreWebView2MemoryUsageTargetLevel.Normal;
                 }
                 catch { }
+            // WinForms restores a custom-chrome window bigger by the size of a standard frame: put the real size back
+            if (WindowState == FormWindowState.Normal && !fullscreen)
+            {
+                if (lastState != FormWindowState.Normal) restoreFixUntil = DateTime.UtcNow.AddMilliseconds(800);
+                if (DateTime.UtcNow < restoreFixUntil)
+                {
+                    if (!normalBounds.IsEmpty && Size != normalBounds.Size)
+                    {
+                        Size want = normalBounds.Size;
+                        BeginInvoke((MethodInvoker)delegate { if (WindowState == FormWindowState.Normal && !fullscreen) Size = want; });
+                    }
+                }
+                else normalBounds = Bounds;
+            }
+            if (WindowState == FormWindowState.Minimized) { HideSuggest(); toastPopup.Hide(); }
+            lastState = WindowState;
             DoLayout();
+        }
+
+        protected override void OnMove(EventArgs e)
+        {
+            base.OnMove(e);
+            if (WindowState == FormWindowState.Normal && lastState == FormWindowState.Normal && !fullscreen && DateTime.UtcNow >= restoreFixUntil) normalBounds = Bounds;
+            if (suggest.Visible) PlaceSuggest();
+            if (toastPopup.Visible) PlaceToast();
+        }
+
+        protected override void OnDeactivate(EventArgs e)
+        {
+            base.OnDeactivate(e);
+            HideSuggest();
+            tips.Hide(this);
+        }
+
+        // ---- non-client mouse tracking (the empty part of the tab strip is the window caption)
+        bool ncTracking;
+        [StructLayout(LayoutKind.Sequential)] struct TRACKMOUSEEVENT { public int cbSize; public uint dwFlags; public IntPtr hwndTrack; public uint dwHoverTime; }
+        [DllImport("user32.dll")] static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT t);
+
+        void TrackNcLeave()
+        {
+            if (ncTracking) return;
+            var t = new TRACKMOUSEEVENT { cbSize = Marshal.SizeOf(typeof(TRACKMOUSEEVENT)), dwFlags = 0x00000012, hwndTrack = Handle }; // TME_LEAVE | TME_NONCLIENT
+            ncTracking = TrackMouseEvent(ref t);
         }
 
         /// <summary>Pixel-centred vector icons (glyph fonts are not exactly centred in their boxes).</summary>
@@ -381,7 +450,7 @@ namespace Beryll
                     }
                 }
                 else if (t.IsNewTab) DrawElementTile(g, iconR, false);
-                else TextRenderer.DrawText(g, "", fIconSmall, iconR, Fade(Theme.TextDim, alpha), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                else Glyph.Draw(g, "", fIconSmall, iconR, Fade(Theme.TextDim, alpha));
 
                 if (t.Pinned) continue;
                 int tx = iconR.Right + (int)(8 * k);
@@ -389,13 +458,13 @@ namespace Beryll
                 if (t.Audible)
                 {
                     var ar = new Rectangle(right - (int)(18 * k), r.Top, (int)(18 * k), r.Height - (int)(2 * k));
-                    TextRenderer.DrawText(g, t.Muted ? "" : "", fIconSmall, ar, Theme.TextDim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    Glyph.Draw(g, t.Muted ? "" : "", fIconSmall, ar, Theme.TextDim);
                     right = ar.Left - (int)(2 * k);
                 }
                 if (t.Asleep)
                 {
                     var mr = new Rectangle(tx - (int)(2 * k), r.Top, (int)(16 * k), r.Height - (int)(2 * k));
-                    TextRenderer.DrawText(g, "", fIconSmall, mr, Theme.Beryl, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    Glyph.Draw(g, "", fIconSmall, mr, Theme.Beryl);
                     tx += (int)(16 * k);
                 }
                 string title = string.IsNullOrEmpty(t.Title) ? t.Url : t.Title;
@@ -417,18 +486,50 @@ namespace Beryll
 
         void DrawCaptionButtons(Graphics g)
         {
-            foreach (var kv in new[] { Tuple.Create("min", minR, ""), Tuple.Create("max", maxR, WindowState == FormWindowState.Maximized ? "" : ""), Tuple.Create("close", closeR, "") })
+            foreach (string id in new[] { "min", "max", "close" })
             {
-                bool h = hover == kv.Item1;
-                if (h) using (var b = new SolidBrush(kv.Item1 == "close" ? Color.FromArgb(232, 17, 35) : Theme.StripHover)) g.FillRectangle(b, kv.Item2);
-                TextRenderer.DrawText(g, kv.Item3, fIconSmall, kv.Item2, h && kv.Item1 == "close" ? Color.White : Theme.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                Rectangle r = id == "min" ? minR : id == "max" ? maxR : closeR;
+                bool h = hover == id;
+                if (h) using (var b = new SolidBrush(id == "close" ? Color.FromArgb(232, 17, 35) : Theme.StripHover)) g.FillRectangle(b, r);
+                DrawCaptionGlyph(g, id, r, h && id == "close" ? Color.White : Theme.Text);
             }
+        }
+
+        /// <summary>Caption icons drawn on whole pixels so they stay crisp at every DPI.</summary>
+        void DrawCaptionGlyph(Graphics g, string id, Rectangle r, Color c)
+        {
+            float s = (float)Math.Round(10 * k), w = Math.Max(1f, (float)Math.Round(k));
+            float x0 = (float)Math.Round(r.X + (r.Width - s) / 2f), y0 = (float)Math.Round(r.Y + (r.Height - s) / 2f);
+            GraphicsState st = g.Save();
+            using (var p = new Pen(c, w))
+            {
+                if (id == "close")
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.DrawLine(p, x0, y0, x0 + s, y0 + s);
+                    g.DrawLine(p, x0, y0 + s, x0 + s, y0);
+                }
+                else
+                {
+                    g.SmoothingMode = SmoothingMode.None;
+                    if (id == "min") g.DrawLine(p, x0, y0 + s / 2, x0 + s, y0 + s / 2);
+                    else if (WindowState == FormWindowState.Maximized)
+                    {
+                        float o = Math.Max(2f, (float)Math.Round(2 * k));
+                        g.DrawRectangle(p, x0, y0 + o, s - o, s - o);
+                        g.DrawLine(p, x0 + o, y0, x0 + s, y0);
+                        g.DrawLine(p, x0 + s, y0, x0 + s, y0 + s - o);
+                    }
+                    else g.DrawRectangle(p, x0, y0, s, s);
+                }
+            }
+            g.Restore(st);
         }
 
         void ToolButton(Graphics g, Rectangle r, string id, string glyph, bool enabled)
         {
             if (hover == id && enabled) using (GraphicsPath p = Round(r, r.Width / 2f)) using (var b = new SolidBrush(Theme.Hover)) g.FillPath(b, p);
-            TextRenderer.DrawText(g, glyph, fIcon, r, enabled ? Theme.Text : Fade(Theme.TextDim, 0.5f), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            Glyph.Draw(g, glyph, fIcon, r, enabled ? Theme.Text : Fade(Theme.TextDim, 0.5f));
         }
 
         void DrawToolbar(Graphics g)
@@ -439,7 +540,8 @@ namespace Beryll
             ToolButton(g, reloadR, "reload", active != null && active.Loading ? "" : "", true);
 
             // omnibox pill
-            using (GraphicsPath p = Round(omniR, omniR.Height / 2f))
+            // inset by half a pixel so the 1.6 px focus ring is never clipped at the right / bottom edge
+            using (GraphicsPath p = Round(new RectangleF(omniR.X + 0.5f, omniR.Y + 0.5f, omniR.Width - 1, omniR.Height - 1), (omniR.Height - 1) / 2f))
             {
                 using (var b = new SolidBrush(omni.Focused ? Theme.OmniFocus : Theme.Omni)) g.FillPath(b, p);
                 if (omni.Focused) using (var pen = new Pen(Theme.Beryl, 1.6f * k)) g.DrawPath(pen, p);
@@ -448,12 +550,12 @@ namespace Beryll
             string scheme = SchemeOf(active);
             string lockGlyph = active == null || active.IsNewTab ? "" : scheme == "https" ? "" : "";
             Color lockColor = scheme == "http" ? Theme.Danger : Theme.TextDim;
-            TextRenderer.DrawText(g, lockGlyph, fIconSmall, lockR, lockColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            Glyph.Draw(g, lockGlyph, fIconSmall, lockR, lockColor);
             if (active != null && !active.IsNewTab)
             {
                 bool bm = Store.Bookmarks.Any(b => b.Url == active.Url);
                 if (hover == "star") using (var b = new SolidBrush(Theme.Hover)) g.FillEllipse(b, starR);
-                TextRenderer.DrawText(g, bm ? "" : "", fIconSmall, starR, bm ? Theme.Beryl : Theme.TextDim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                Glyph.Draw(g, bm ? "" : "", fIconSmall, starR, bm ? Theme.Beryl : Theme.TextDim);
             }
 
             // shield
@@ -539,7 +641,7 @@ namespace Beryll
                 var ir = new Rectangle(r.X + (int)(9 * k), r.Y + (r.Height - is2) / 2, is2, is2);
                 Image icon = IconCache.Get(Tiles.Host(b.Url));
                 if (icon != null) g.DrawImage(icon, ir);
-                else TextRenderer.DrawText(g, "", fIconSmall, ir, Theme.TextDim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                else Glyph.Draw(g, "", fIconSmall, ir, Theme.TextDim);
                 TextRenderer.DrawText(g, Short(b.Title, 22), fSmall, new Rectangle(ir.Right + (int)(6 * k), r.Y, r.Right - ir.Right - (int)(10 * k), r.Height), Theme.Text,
                     TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             }
@@ -555,22 +657,27 @@ namespace Beryll
         public void ShowToast(string text, int ms = 2200)
         {
             toast = text;
-            if (toastLabel == null)
-            {
-                toastLabel = new Label { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White, BackColor = Color.FromArgb(40, 44, 50) };
-                Controls.Add(toastLabel);
-            }
-            toastLabel.Font = fToast;
-            toastLabel.Text = text;
-            Size ts = TextRenderer.MeasureText(text, fToast);
-            toastLabel.SetBounds((ClientSize.Width - ts.Width) / 2 - (int)(20 * k), content.Top + (int)(16 * k), ts.Width + (int)(40 * k), (int)(38 * k));
-            toastLabel.Visible = true;
-            toastLabel.BringToFront();
+            if (!Visible || WindowState == FormWindowState.Minimized) return;
+            toastPopup.Msg = text;
+            toastPopup.Font = fToast;
+            PlaceToast();
+            toastPopup.Invalidate();
+            if (!toastPopup.Visible) toastPopup.Visible = true;
             toastTimer.Stop(); toastTimer.Interval = ms; toastTimer.Start();
-            toastTimer.Tick -= HideToastLabel; toastTimer.Tick += HideToastLabel;
+            toastTimer.Tick -= HideToastPopup; toastTimer.Tick += HideToastPopup;
         }
-        Label toastLabel;
-        void HideToastLabel(object s, EventArgs e) { if (toastLabel != null) toastLabel.Visible = false; }
+
+        void PlaceToast()
+        {
+            Size ts = TextRenderer.MeasureText(toastPopup.Msg ?? "", fToast);
+            var r = new Rectangle((ClientSize.Width - ts.Width) / 2 - (int)(20 * k), content.Top + (int)(16 * k), ts.Width + (int)(40 * k), (int)(38 * k));
+            toastPopup.Bounds = RectangleToScreen(r);
+        }
+
+        void HideToastPopup(object s, EventArgs e) { toastPopup.Hide(); }
+
+        /// <summary>Focus ring of the address field is drawn slightly outside it — repaint with a margin.</summary>
+        Rectangle OmniPaintR { get { return Rectangle.Inflate(omniR, (int)(3 * k), (int)(3 * k)); } }
 
         static string SchemeOf(Tab t)
         {
@@ -583,9 +690,16 @@ namespace Beryll
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            UpdateHover(e.Location);
+            Cursor = omniR.Contains(e.Location) && !starR.Contains(e.Location) ? Cursors.IBeam : Cursors.Default;
+        }
+
+        /// <summary>Hover highlight + tooltip for our painted buttons. Also called for the caption (non-client) area,
+        /// otherwise the tooltip of "+" stayed on screen after moving right onto the empty strip.</summary>
+        void UpdateHover(Point p)
+        {
             string h = "";
             int ht = -1, hc = -1, hb = -1;
-            Point p = e.Location;
             if (minR.Contains(p)) h = "min"; else if (maxR.Contains(p)) h = "max"; else if (closeR.Contains(p)) h = "close";
             else if (plusR.Contains(p)) h = "plus";
             else if (backR.Contains(p)) h = "back"; else if (fwdR.Contains(p)) h = "fwd"; else if (reloadR.Contains(p)) h = "reload";
@@ -605,7 +719,8 @@ namespace Beryll
                 }
                 if (tip == null && ht >= 0) tip = tabs[ht].Title + (tabs[ht].Asleep ? "\nВкладка спить — пам'ять звільнено" : "");
                 if (tip == null && hb >= 0) tip = Store.Bookmarks[hb].Url;
-                tips.SetToolTip(this, tip ?? "");
+                if (string.IsNullOrEmpty(tip)) { tips.Hide(this); tips.SetToolTip(this, null); }
+                else tips.SetToolTip(this, tip);
                 hover = h; hoverTab = ht; hoverClose = hc; hoverBar = hb;
                 Invalidate(new Rectangle(0, 0, ClientSize.Width, stripH + toolH + barH));
             }
@@ -614,6 +729,10 @@ namespace Beryll
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
+            // the cursor may have only moved onto the caption part of the strip: re-evaluate from its real position
+            Point c = PointToClient(Cursor.Position);
+            if (ClientRectangle.Contains(c)) { UpdateHover(c); TrackNcLeave(); return; }
+            tips.Hide(this); tips.SetToolTip(this, null);
             hover = ""; hoverTab = hoverClose = hoverBar = -1;
             Invalidate(new Rectangle(0, 0, ClientSize.Width, stripH + toolH + barH));
         }
@@ -653,6 +772,7 @@ namespace Beryll
             if (fwdR.Contains(p) && c != null && c.CanGoForward) { c.GoForward(); return; }
             if (reloadR.Contains(p)) { ReloadOrStop(); return; }
             if (starR.Contains(p) && active != null && !active.IsNewTab) { ToggleBookmark(); return; }
+            if (omniR.Contains(p)) { omni.Focus(); omni.SelectAll(); return; }   // click on the pill padding / lock icon
             if (shieldR.Contains(p)) { ShowDashboard(); return; }
             if (fireR.Contains(p)) { Fire(); return; }
             if (menuR.Contains(p)) { ShowMenu(); return; }
@@ -886,7 +1006,7 @@ namespace Beryll
             Store.SaveSession(tabs, Math.Max(0, tabs.IndexOf(active)));
             Store.CompactHistory();
             if (fullscreen) { S.Max = prevMax; SaveRect(prevBounds); }
-            else { S.Max = WindowState == FormWindowState.Maximized; SaveRect(WindowState == FormWindowState.Normal ? Bounds : RestoreBounds); }
+            else { S.Max = WindowState == FormWindowState.Maximized; SaveRect(WindowState == FormWindowState.Normal ? Bounds : !normalBounds.IsEmpty ? normalBounds : RestoreBounds); }
             S.Save();
             Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnSysPrefs;
             try { File.Delete(Paths.File("instance")); } catch { }
@@ -901,6 +1021,7 @@ namespace Beryll
             bool ok = S.X != int.MinValue && S.W > 400 && S.H > 300 && Screen.AllScreens.Any(sc => Rectangle.Intersect(sc.WorkingArea, r).Width > 150);
             if (!ok) { int w = (int)(wa.Width * 0.82), h = (int)(wa.Height * 0.86); r = new Rectangle(wa.X + (wa.Width - w) / 2, wa.Y + (wa.Height - h) / 2, w, h); }
             Bounds = r;
+            normalBounds = r;
             if (S.Max) WindowState = FormWindowState.Maximized;
         }
 
@@ -951,7 +1072,7 @@ namespace Beryll
             }
             active = t;
             t.LastActive = DateTime.Now;
-            suggest.Visible = false;
+            HideSuggest();
             if (t.IsNewTab)
             {
                 ntp.Visible = true; ntp.BringToFront(); ntp.RefreshData();
@@ -1139,7 +1260,7 @@ namespace Beryll
         {
             string url = ToUrl(input);
             if (url == null) return;
-            suggest.Visible = false;
+            HideSuggest();
             if (active == null || active.Pinned && active.View != null && !SameSite(active.Url, url)) { NewTab(url, true); return; }
             active.Url = url;
             active.Title = url;
@@ -1336,33 +1457,36 @@ namespace Beryll
         void ShowSuggestions()
         {
             var items = Store.Suggest(omni.Text, 7).ToList();
-            suggest.BeginUpdate();
             suggest.Items.Clear();
-            foreach (Bookmark b in items) suggest.Items.Add(b);
-            suggest.EndUpdate();
-            if (items.Count == 0) { suggest.Visible = false; return; }
+            suggest.Items.AddRange(items);
+            suggest.SelectedIndex = -1;
+            if (items.Count == 0 || !omni.Focused) { HideSuggest(); return; }
             PlaceSuggest();
-            suggest.Visible = true;
-            suggest.BringToFront();
+            suggest.Invalidate();
+            if (!suggest.Visible) suggest.Visible = true;
+            suggestWasDown = Native.MouseDown;
+            suggestWatch.Start();
+        }
+
+        void HideSuggest()
+        {
+            suggestWatch.Stop();
+            if (suggest.Visible) suggest.Hide();
         }
 
         void PlaceSuggest()
         {
-            suggest.BackColor = Theme.MenuBg;
-            suggest.ForeColor = Theme.Text;
-            suggest.SetBounds(omniR.Left, omniR.Bottom + (int)(4 * k), omniR.Width, suggest.Items.Count * suggest.ItemHeight + 4);
+            Rectangle o = RectangleToScreen(omniR);
+            suggest.Bounds = new Rectangle(o.Left, o.Bottom + (int)(4 * k), o.Width, suggest.Items.Count * suggest.ItemHeight + suggest.Pad * 2);
         }
 
-        void DrawSuggestion(object sender, DrawItemEventArgs e)
+        void DrawSuggestion(Graphics g, Rectangle bounds, Bookmark b, bool sel)
         {
-            if (e.Index < 0) return;
-            var b = (Bookmark)suggest.Items[e.Index];
-            bool sel = (e.State & DrawItemState.Selected) != 0;
-            using (var br = new SolidBrush(sel ? Theme.MenuSel : Theme.MenuBg)) e.Graphics.FillRectangle(br, e.Bounds);
-            var r = new Rectangle(e.Bounds.X + (int)(14 * k), e.Bounds.Y, e.Bounds.Width - (int)(28 * k), e.Bounds.Height);
+            if (sel) using (var br = new SolidBrush(Theme.MenuSel)) g.FillRectangle(br, bounds);
+            var r = new Rectangle(bounds.X + (int)(14 * k), bounds.Y, bounds.Width - (int)(28 * k), bounds.Height);
             int half = r.Width * 55 / 100;
-            TextRenderer.DrawText(e.Graphics, b.Title, fUi, new Rectangle(r.X, r.Y, half, r.Height), Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-            TextRenderer.DrawText(e.Graphics, b.Url, fSmall, new Rectangle(r.X + half + (int)(10 * k), r.Y, r.Width - half - (int)(10 * k), r.Height), Theme.Beryl, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, b.Title, fUi, new Rectangle(r.X, r.Y, half, r.Height), Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
+            TextRenderer.DrawText(g, b.Url, fSmall, new Rectangle(r.X + half + (int)(10 * k), r.Y, r.Width - half - (int)(10 * k), r.Height), Theme.Beryl, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
         }
 
         void GoSuggestion()
@@ -1383,19 +1507,19 @@ namespace Beryll
             else if (e.KeyCode == Keys.Escape)
             {
                 e.SuppressKeyPress = true;
-                suggest.Visible = false;
+                HideSuggest();
                 omni.Text = active != null && !active.IsNewTab ? active.Url : "";
                 if (active != null && active.View != null) active.View.Focus();
             }
             else if (e.KeyCode == Keys.Down && suggest.Visible)
             {
                 e.SuppressKeyPress = true;
-                suggest.SelectedIndex = Math.Min(suggest.Items.Count - 1, suggest.SelectedIndex + 1);
+                suggest.Highlight(Math.Min(suggest.Items.Count - 1, suggest.SelectedIndex + 1));
             }
             else if (e.KeyCode == Keys.Up && suggest.Visible)
             {
                 e.SuppressKeyPress = true;
-                suggest.SelectedIndex = Math.Max(-1, suggest.SelectedIndex - 1);
+                suggest.Highlight(Math.Max(-1, suggest.SelectedIndex - 1));
             }
         }
 
@@ -1480,7 +1604,12 @@ namespace Beryll
             DoLayout();
         }
 
-        ContextMenuStrip NewMenu() { return new ContextMenuStrip { Renderer = new MenuRenderer(), Font = fUi, ShowImageMargin = false, ShowCheckMargin = true }; }
+        ContextMenuStrip NewMenu()
+        {
+            var m = new ContextMenuStrip { Renderer = new MenuRenderer(), Font = fUi, ShowImageMargin = false, ShowCheckMargin = true };
+            m.Opened += delegate { HideSuggest(); tips.Hide(this); OutsideClick.Watch(m); };   // close also on clicks inside the web page
+            return m;
+        }
 
         static ToolStripMenuItem Item(ToolStripItemCollection items, string text, string keys, Action a, bool check = false)
         {
@@ -1553,7 +1682,7 @@ namespace Beryll
             if (!Installer.RunningInstalled) Item(m.Items, "Встановити Beryll на цей ПК…", null, () => Dialogs.InstallDialog(this));
             Item(m.Items, "Перевірити оновлення", null, () => CheckUpdates(true));
             Item(m.Items, "Про Beryll", null, () => Dialogs.About(this, env));
-            m.Show(this, new Point(menuR.Right - (int)(260 * k), menuR.Bottom + 2));
+            m.Show(this, new Point(menuR.Right, menuR.Bottom + (int)(4 * k)), ToolStripDropDownDirection.BelowLeft);   // right edge aligned with the ⋯ button
         }
 
         void ShowDashboard()
