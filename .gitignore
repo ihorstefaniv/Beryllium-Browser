@@ -3,3 +3,5 @@ dist/
 Data/
 portable
 keys/
+
+legacy/.cache/

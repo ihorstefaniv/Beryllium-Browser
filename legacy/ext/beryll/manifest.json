@@ -1,0 +1,26 @@
+{
+  "manifest_version": 2,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp2Bg9Cg5M+xC0BRcNXgbXiVlLLnyzJP2rBHVK75eW0tE5hqLtCWENDRKunhGgHvd0auoymudnazHQsnyRMd32CI9ZwuSxET9tTTt5w6Th5xnoVXMro9ZLv0MyGrTmlY4rm0PjSZ7Izan/acJ40NcfSd55VkKQO2RQi0pL56BzGAMTwiL98uH5ShaSep93/gD90TxEnrPBC4MiZl37pmqdjq5BzuTFak8BNZCIXaJwb893r0ePASAGz92v+lhH72z9Lfw9A3yjqc+S97h0wlbSR5N6KWudUvlTK7RXm6wMhjHPbtCFCc1dtSkSheXVygbNnYBC0/lXq5TWqjtHu/1QwIDAQAB",
+  "name": "Beryll",
+  "version": "1.0.0",
+  "description": "Beryll Legacy: нова вкладка, DuckDuckGo, H.264 для відео на слабких ПК, Global Privacy Control.",
+  "icons": { "48": "icon48.png", "128": "icon128.png" },
+  "chrome_url_overrides": { "newtab": "newtab.html" },
+  "chrome_settings_overrides": {
+    "search_provider": {
+      "name": "DuckDuckGo",
+      "keyword": "ddg",
+      "search_url": "https://duckduckgo.com/?q={searchTerms}&kl=ua-uk",
+      "suggest_url": "https://duckduckgo.com/ac/?q={searchTerms}&type=list",
+      "favicon_url": "https://duckduckgo.com/favicon.ico",
+      "encoding": "UTF-8",
+      "is_default": true
+    }
+  },
+  "background": { "scripts": ["background.js"], "persistent": true },
+  "permissions": ["storage", "topSites", "webRequest", "webRequestBlocking", "<all_urls>", "chrome://favicon/"],
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_start", "all_frames": true }
+  ],
+  "content_security_policy": "script-src 'self'; object-src 'self'"
+}
