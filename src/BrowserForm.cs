@@ -201,7 +201,40 @@ namespace Beryll
 
         static bool IconFontExists(string n) { using (var f = new Font(n, 10f)) return f.Name == n; }
 
-        protected override void OnResize(EventArgs e) { base.OnResize(e); DoLayout(); }
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            // minimized window: the visible tab also trims memory (unless it plays sound)
+            if (active != null && active.View != null && active.View.CoreWebView2 != null)
+                try
+                {
+                    active.View.CoreWebView2.MemoryUsageTargetLevel = WindowState == FormWindowState.Minimized && !active.Audible
+                        ? CoreWebView2MemoryUsageTargetLevel.Low : CoreWebView2MemoryUsageTargetLevel.Normal;
+                }
+                catch { }
+            DoLayout();
+        }
+
+        /// <summary>Pixel-centred vector icons (glyph fonts are not exactly centred in their boxes).</summary>
+        void DrawCross(Graphics g, Rectangle r, Color c, float size)
+        {
+            float cx = r.X + r.Width / 2f, cy = r.Y + r.Height / 2f, h = size / 2f;
+            using (var p = new Pen(c, 1.4f * k) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawLine(p, cx - h, cy - h, cx + h, cy + h);
+                g.DrawLine(p, cx - h, cy + h, cx + h, cy - h);
+            }
+        }
+
+        void DrawPlus(Graphics g, Rectangle r, Color c, float size)
+        {
+            float cx = r.X + r.Width / 2f, cy = r.Y + r.Height / 2f, h = size / 2f;
+            using (var p = new Pen(c, 1.5f * k) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawLine(p, cx - h, cy, cx + h, cy);
+                g.DrawLine(p, cx, cy - h, cx, cy + h);
+            }
+        }
 
         void DoLayout()
         {
@@ -373,11 +406,11 @@ namespace Beryll
                 {
                     Rectangle c = tabCloseR[i];
                     if (i == hoverClose) using (var b = new SolidBrush(Theme.Hover)) g.FillEllipse(b, c);
-                    TextRenderer.DrawText(g, "", fIconSmall, c, Theme.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    DrawCross(g, c, Theme.Text, 8 * k);
                 }
             }
             if (hover == "plus") using (var b = new SolidBrush(Theme.StripHover)) g.FillEllipse(b, plusR);
-            TextRenderer.DrawText(g, "", fIconSmall, plusR, Theme.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            DrawPlus(g, plusR, Theme.Text, 12 * k);
         }
 
         static Color Fade(Color c, float a) { return Color.FromArgb((int)(c.A * a), c); }
@@ -637,8 +670,10 @@ namespace Beryll
                 var opts = new CoreWebView2EnvironmentOptions();
                 var args = new List<string>();
                 if (Hw.Lite) args.Add("--autoplay-policy=document-user-activation-required");
+                if (Hw.Tier <= 2) args.Add("--disable-back-forward-cache");   // less RAM held by previous pages on weak PCs
                 opts.AdditionalBrowserArguments = string.Join(" ", args);
                 opts.Language = "uk";
+                opts.AreBrowserExtensionsEnabled = true;
                 env = await CoreWebView2Environment.CreateAsync(null, Paths.Profile, opts);
             }
             catch (WebView2RuntimeNotFoundException)
@@ -668,7 +703,181 @@ namespace Beryll
             }
             else NewTab(string.IsNullOrEmpty(startUrl) ? null : startUrl, true);
             governor.Start();
+            Updater.Cleanup();
             if (!S.Onboarded) BeginInvoke((MethodInvoker)delegate { Dialogs.Onboarding(this); });
+            ScheduleUpdateCheck();
+        }
+
+        // ================================================================ updates (offline-first, signed)
+
+        void ScheduleUpdateCheck()
+        {
+            int today = int.Parse(DateTime.Now.ToString("yyyyMMdd"));
+            if (!S.AutoUpdate || S.LastUpdateCheck == today) return;
+            var t = new Timer { Interval = 20000 };
+            t.Tick += delegate { t.Stop(); t.Dispose(); S.LastUpdateCheck = today; CheckUpdates(false); };
+            t.Start();
+        }
+
+        public void CheckUpdates(bool manual)
+        {
+            var th = new System.Threading.Thread(() =>
+            {
+                Updater.Release r = null; string err = null;
+                try { r = Updater.Check(); } catch (Exception ex) { err = ex.Message; }
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        if (r != null && r.Version > Updater.Current) OfferUpdate(r);
+                        else if (manual) ShowToast(err != null ? "Немає зв'язку з сервером оновлень" : "У вас остання версія Beryll " + Program.Version, 2600);
+                    });
+                }
+                catch { }
+            });
+            th.IsBackground = true;
+            th.Priority = System.Threading.ThreadPriority.BelowNormal;
+            th.Start();
+        }
+
+        void OfferUpdate(Updater.Release r)
+        {
+            string notes = string.IsNullOrEmpty(r.Notes) ? "" : "\n\n" + (r.Notes.Length > 500 ? r.Notes.Substring(0, 500) + "…" : r.Notes);
+            if (!Dialogs.Confirm(this, "Оновлення Beryll", "Доступна нова версія " + r.Version.ToString(3) + " (у вас " + Program.Version + ")." + notes + "\n\nОновити зараз? Вкладки відновляться.", "Оновити")) return;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                Store.SaveSession(tabs, Math.Max(0, tabs.IndexOf(active)));
+                Updater.Apply();
+                Close();
+            }
+            catch (Exception ex)
+            {
+                Cursor = Cursors.Default;
+                MessageBox.Show(this, "Не вдалося оновити: " + ex.Message, "Beryll", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // ================================================================ ad blocking extension (optional)
+
+        bool extChecked;
+
+        async void EnsureExtensions(CoreWebView2 c)
+        {
+            if (extChecked) return;
+            extChecked = true;
+            try
+            {
+                var list = await c.Profile.GetBrowserExtensionsAsync();
+                var ubol = list.FirstOrDefault(x => x.Name != null && x.Name.IndexOf("uBlock", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (S.AdBlockMax && AdBlock.Installed)
+                {
+                    if (ubol == null) { await c.Profile.AddBrowserExtensionAsync(AdBlock.Dir); ShowToast("Максимальне блокування реклами увімкнено"); }
+                    else if (!ubol.IsEnabled) await ubol.EnableAsync(true);
+                }
+                else if (ubol != null) await ubol.RemoveAsync();
+            }
+            catch (Exception ex) { ShowToast("Розширення блокування: " + ex.Message, 3500); }
+        }
+
+        /// <summary>Turns the uBlock Origin Lite engine on/off (downloads it once, ~9 MB, integrity-checked).</summary>
+        public async void SetAdBlockMax(bool on)
+        {
+            if (on && !AdBlock.Installed)
+            {
+                ShowToast("Завантажую uBlock Origin Lite (9 МБ)…", 60000);
+                try { await Task.Run(() => AdBlock.Install()); }
+                catch (Exception ex) { ShowToast("Не вдалося завантажити: " + ex.Message, 4000); S.AdBlockMax = false; S.Save(); return; }
+            }
+            S.AdBlockMax = on;
+            S.Save();
+            extChecked = false;
+            CoreWebView2 c = ActiveCore ?? tabs.Where(t => t.View != null && t.View.CoreWebView2 != null).Select(t => t.View.CoreWebView2).FirstOrDefault();
+            if (c != null) EnsureExtensions(c);
+            if (!on) AdBlock.Remove();
+            ShowToast(on ? "Максимальне блокування увімкнено" : "Максимальне блокування вимкнено");
+        }
+
+        // ================================================================ camera / microphone / location permissions
+
+        void OnPermission(Tab t, CoreWebView2 c, CoreWebView2PermissionRequestedEventArgs e)
+        {
+            string what = PermissionName(e.PermissionKind);
+            if (what == null) return; // engine defaults for the rest
+            e.Handled = true;
+            permQueue.Add(new PermReq { T = t, E = e, D = e.GetDeferral(), Host = Tiles.Host(e.Uri) });
+            if (permQueue.Count == 1 && !permBusy)
+            {
+                // short pause so camera + microphone (which arrive one after another) end up in one dialog
+                var tm = new Timer { Interval = 350 };
+                tm.Tick += (s, a) => { tm.Stop(); tm.Dispose(); ProcessPermissions(); };
+                tm.Start();
+            }
+        }
+
+        class PermReq { public Tab T; public CoreWebView2PermissionRequestedEventArgs E; public CoreWebView2Deferral D; public string Host; }
+        readonly List<PermReq> permQueue = new List<PermReq>();
+        bool permBusy;
+
+        static bool IsMedia(CoreWebView2PermissionKind k) { return k == CoreWebView2PermissionKind.Camera || k == CoreWebView2PermissionKind.Microphone; }
+
+        /// <summary>One dialog at a time; camera + microphone from the same site are asked together.</summary>
+        void ProcessPermissions()
+        {
+            if (permBusy) return;
+            permBusy = true;
+            try
+            {
+                while (permQueue.Count > 0)
+                {
+                    PermReq first = permQueue[0];
+                    var batch = permQueue.Where(r => r == first || (r.T == first.T && r.Host == first.Host && IsMedia(r.E.PermissionKind) && IsMedia(first.E.PermissionKind))).ToList();
+                    foreach (PermReq r in batch) permQueue.Remove(r);
+                    bool cam = batch.Any(r => r.E.PermissionKind == CoreWebView2PermissionKind.Camera), mic = batch.Any(r => r.E.PermissionKind == CoreWebView2PermissionKind.Microphone);
+                    string what = cam && mic ? "камери і мікрофона" : PermissionName(first.E.PermissionKind);
+                    bool allow = false, remember = false;
+                    try
+                    {
+                        if (first.T != active && tabs.Contains(first.T)) Activate(first.T);
+                        allow = Dialogs.Permission(this, first.Host, what, PermissionGlyph(first.E.PermissionKind), out remember);
+                    }
+                    catch { allow = false; }
+                    foreach (PermReq r in batch)
+                    {
+                        try { r.E.State = allow ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny; r.E.SavesInProfile = remember; } catch { }
+                        try { r.D.Complete(); } catch { }
+                    }
+                }
+            }
+            finally { permBusy = false; }
+        }
+
+        public static string PermissionName(CoreWebView2PermissionKind k)
+        {
+            switch (k)
+            {
+                case CoreWebView2PermissionKind.Camera: return "камери";
+                case CoreWebView2PermissionKind.Microphone: return "мікрофона";
+                case CoreWebView2PermissionKind.Geolocation: return "вашого місцезнаходження";
+                case CoreWebView2PermissionKind.Notifications: return "сповіщень";
+                case CoreWebView2PermissionKind.ClipboardRead: return "буфера обміну";
+                case CoreWebView2PermissionKind.MultipleAutomaticDownloads: return "автоматичного завантаження кількох файлів";
+                case CoreWebView2PermissionKind.WindowManagement: return "керування вікнами";
+                case CoreWebView2PermissionKind.LocalFonts: return "шрифтів комп'ютера";
+                default: return null;
+            }
+        }
+
+        static string PermissionGlyph(CoreWebView2PermissionKind k)
+        {
+            switch (k)
+            {
+                case CoreWebView2PermissionKind.Camera: return "";
+                case CoreWebView2PermissionKind.Microphone: return "";
+                case CoreWebView2PermissionKind.Geolocation: return "";
+                case CoreWebView2PermissionKind.Notifications: return "";
+                default: return "";
+            }
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -733,7 +942,12 @@ namespace Beryll
             if (active != null && active != t)
             {
                 active.LastActive = DateTime.Now;
-                if (active.View != null) active.View.Visible = false;
+                if (active.View != null)
+                {
+                    active.View.Visible = false;
+                    // background tab: engine trims caches right away (music / video keep playing)
+                    try { if (active.View.CoreWebView2 != null) active.View.CoreWebView2.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low; } catch { }
+                }
             }
             active = t;
             t.LastActive = DateTime.Now;
@@ -752,6 +966,7 @@ namespace Beryll
                 {
                     t.View.Visible = true;
                     t.View.BringToFront();
+                    try { if (t.View.CoreWebView2 != null) t.View.CoreWebView2.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Normal; } catch { }
                     if (t.Frozen && t.View.CoreWebView2 != null)
                     {
                         try
@@ -795,7 +1010,7 @@ namespace Beryll
         async void Wake(Tab t, string url, CoreWebView2NewWindowRequestedEventArgs pending, CoreWebView2Deferral deferral)
         {
             if (env == null || t.View != null) { if (deferral != null) deferral.Complete(); return; }
-            var wv = new WebView2 { Dock = DockStyle.Fill, Visible = t == active, DefaultBackgroundColor = Theme.Page };
+            var wv = new WebView2 { Dock = DockStyle.Fill, Visible = t == active, DefaultBackgroundColor = Color.White };   // like Chrome: pages without their own background are white (black text stays readable)
             t.View = wv;
             content.Controls.Add(wv);
             if (t == active) wv.BringToFront();
@@ -885,6 +1100,8 @@ namespace Beryll
                     try { c.Reload(); } catch { }
                 }
             };
+            c.PermissionRequested += (s, e) => OnPermission(t, c, e);
+            EnsureExtensions(c);
             HookAccelerators(wv);
         }
 
@@ -1333,6 +1550,8 @@ namespace Beryll
             Item(mem.DropDownItems, "Діагностика…", null, () => Dialogs.Diagnostics(this, tabs));
             m.Items.Add(mem);
             Item(m.Items, "Налаштування…", null, () => Dialogs.SettingsDialog(this));
+            if (!Installer.RunningInstalled) Item(m.Items, "Встановити Beryll на цей ПК…", null, () => Dialogs.InstallDialog(this));
+            Item(m.Items, "Перевірити оновлення", null, () => CheckUpdates(true));
             Item(m.Items, "Про Beryll", null, () => Dialogs.About(this, env));
             m.Show(this, new Point(menuR.Right - (int)(260 * k), menuR.Bottom + 2));
         }

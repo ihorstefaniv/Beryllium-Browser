@@ -168,6 +168,8 @@ namespace Beryll
         public int LiteMode, ForceH264;       // 0 auto, 1 on, 2 off
         public int LiveTabs, SleepMinutes;    // 0 = auto by hardware
         public bool RestoreSession = true, BookmarksBar = true, Onboarded;
+        public bool AdBlockMax, AutoUpdate = true;
+        public int DnsMode, LastUpdateCheck;
         public long TotalBlocked, TotalFreedMb;
         public HashSet<string> AllowList = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> Fireproof = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -193,6 +195,7 @@ namespace Beryll
                 s.LiteMode = I(d, "LiteMode", 0); s.ForceH264 = I(d, "ForceH264", 0);
                 s.LiveTabs = I(d, "LiveTabs", 0); s.SleepMinutes = I(d, "SleepMinutes", 0);
                 s.RestoreSession = B(d, "RestoreSession", true); s.BookmarksBar = B(d, "BookmarksBar", true); s.Onboarded = B(d, "Onboarded", false);
+                s.AdBlockMax = B(d, "AdBlockMax", false); s.AutoUpdate = B(d, "AutoUpdate", true); s.DnsMode = I(d, "DnsMode", 0); s.LastUpdateCheck = I(d, "LastUpdateCheck", 0);
                 long l;
                 string v;
                 if (d.TryGetValue("TotalBlocked", out v) && long.TryParse(v, out l)) s.TotalBlocked = l;
@@ -214,6 +217,7 @@ namespace Beryll
             a("CookiePopups", CookiePopups ? 1 : 0); a("StripParams", StripParams ? 1 : 0);
             a("LiteMode", LiteMode); a("ForceH264", ForceH264); a("LiveTabs", LiveTabs); a("SleepMinutes", SleepMinutes);
             a("RestoreSession", RestoreSession ? 1 : 0); a("BookmarksBar", BookmarksBar ? 1 : 0); a("Onboarded", Onboarded ? 1 : 0);
+            a("AdBlockMax", AdBlockMax ? 1 : 0); a("AutoUpdate", AutoUpdate ? 1 : 0); a("DnsMode", DnsMode); a("LastUpdateCheck", LastUpdateCheck);
             a("TotalBlocked", TotalBlocked); a("TotalFreedMb", TotalFreedMb);
             a("AllowList", string.Join("|", AllowList)); a("Fireproof", string.Join("|", Fireproof));
             try { System.IO.File.WriteAllText(IniPath, sb.ToString(), Encoding.UTF8); } catch { }

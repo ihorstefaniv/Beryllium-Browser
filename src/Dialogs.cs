@@ -412,39 +412,61 @@ namespace Beryll
         {
             Settings S = owner.S;
             float k = owner.UiScale;
-            using (Form f = Base(owner, "Налаштування Beryll", 520, 640))
+            using (Form f = Base(owner, "Налаштування Beryll", 900, 560))
             {
                 var h = new Font("Segoe UI Semibold", 14f * k, FontStyle.Regular, GraphicsUnit.Pixel);
-                int y = 14;
-                Lbl(f, "Загальні", 20, y, 480, 26, k, false, h); y += 32;
-                Lbl(f, "Пошук", 20, y + 4, 140, 24, k, true); var cSearch = Combo(f, 170, y, 330, k, Settings.SearchNames, S.Search); y += 36;
-                Lbl(f, "Тема", 20, y + 4, 140, 24, k, true); var cTheme = Combo(f, 170, y, 330, k, new[] { "Як у Windows", "Темна", "Світла" }, S.ThemeMode); y += 36;
-                var sRestore = Sw(f, "Відновлювати вкладки після запуску", 20, y, 480, k, S.RestoreSession); y += 34;
-                var sBar = Sw(f, "Панель закладок", 20, y, 480, k, S.BookmarksBar); y += 42;
+                // ------------------------------------------------ left column
+                int x = 20, w = 410, y = 14;
+                Lbl(f, "Загальні", x, y, w, 26, k, false, h); y += 32;
+                Lbl(f, "Пошук", x, y + 4, 120, 24, k, true); var cSearch = Combo(f, x + 130, y, w - 130, k, Settings.SearchNames, S.Search); y += 36;
+                Lbl(f, "Тема", x, y + 4, 120, 24, k, true); var cTheme = Combo(f, x + 130, y, w - 130, k, new[] { "Як у Windows", "Темна", "Світла" }, S.ThemeMode); y += 36;
+                var sRestore = Sw(f, "Відновлювати вкладки після запуску", x, y, w, k, S.RestoreSession); y += 32;
+                var sBar = Sw(f, "Панель закладок", x, y, w, k, S.BookmarksBar); y += 40;
 
-                Lbl(f, "Захист (як у DuckDuckGo)", 20, y, 480, 26, k, false, h); y += 32;
-                var sProt = Sw(f, "Блокувати трекери і рекламу", 20, y, 480, k, S.Protection); y += 32;
-                var sHttps = Sw(f, "Спершу HTTPS (безпечне з'єднання)", 20, y, 480, k, S.HttpsUpgrade); y += 32;
-                var sStrip = Sw(f, "Прибирати трекінг із посилань (utm, fbclid…)", 20, y, 480, k, S.StripParams); y += 32;
-                var sGpc = Sw(f, "Global Privacy Control (не продавати мої дані)", 20, y, 480, k, S.Gpc); y += 32;
-                var sCook = Sw(f, "Автоматично відхиляти cookie-банери", 20, y, 480, k, S.CookiePopups); y += 42;
+                Lbl(f, "Захист (як у DuckDuckGo)", x, y, w, 26, k, false, h); y += 32;
+                var sProt = Sw(f, "Блокувати трекери (вбудований список)", x, y, w, k, S.Protection); y += 32;
+                var sHttps = Sw(f, "Спершу HTTPS (безпечне з'єднання)", x, y, w, k, S.HttpsUpgrade); y += 32;
+                var sStrip = Sw(f, "Прибирати трекінг із посилань (utm, fbclid…)", x, y, w, k, S.StripParams); y += 32;
+                var sGpc = Sw(f, "Global Privacy Control", x, y, w, k, S.Gpc); y += 32;
+                var sCook = Sw(f, "Автоматично відхиляти cookie-банери", x, y, w, k, S.CookiePopups); y += 40;
 
-                Lbl(f, "Швидкість і пам'ять", 20, y, 480, 26, k, false, h); y += 30;
-                Lbl(f, "Профіль ПК: " + owner.Hw.TierName + "\n" + owner.Hw.Summary, 20, y, 480, 40, k, true); y += 46;
-                string[] liveNames = { "Авто (" + HwProfile.Detect(new Settings()).LiveTabs + ")", "2", "4", "8", "16", "32" };
+                Lbl(f, "Блокування реклами (open source)", x, y, w, 26, k, false, h); y += 32;
+                var sMax = Sw(f, "Максимальне: uBlock Origin Lite (+9 МБ)", x, y, w, k, S.AdBlockMax); y += 30;
+                Lbl(f, "Списки EasyList, EasyPrivacy, Peter Lowe, регіональні; працює всередині рушія.", x, y, w, 20, k, true); y += 28;
+                var bDns = Btn(f, "DNS-фільтр для всього ПК…", x, y, 200, k); y += 36;
+                bDns.Click += delegate
+                {
+                    MessageBox.Show(f, "Фільтр реклами на рівні DNS діє для всіх програм одразу і не забирає пам'яті.\n\n" +
+                        "Windows 11: Параметри → Мережа та Інтернет → ваше підключення → Призначення DNS-сервера → Змінити → Вручну, IPv4:\n" +
+                        "   94.140.14.14 і 94.140.15.15 (AdGuard DNS, без реклами)\n   Шифрування DNS: «Лише зашифровано (DNS через HTTPS)».\n\n" +
+                        "Windows 10: те саме у властивостях мережевого адаптера (IPv4 → DNS-сервери).\n\n" +
+                        "Потрібні права адміністратора. Зараз відкриються параметри мережі.", "DNS-фільтр", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    try { System.Diagnostics.Process.Start("ms-settings:network-status"); } catch { }
+                };
+
+                // ------------------------------------------------ right column
+                x = 470; w = 410; y = 14;
+                Lbl(f, "Швидкість і пам'ять", x, y, w, 26, k, false, h); y += 32;
+                Lbl(f, "Профіль ПК: " + owner.Hw.TierName + "\n" + owner.Hw.Summary, x, y, w, 40, k, true); y += 48;
+                string[] liveNames = { "Авто", "2", "4", "8", "16", "32" };
                 int[] liveVals = { 0, 2, 4, 8, 16, 32 };
-                Lbl(f, "Живих вкладок", 20, y + 4, 150, 24, k, true); var cLive = Combo(f, 170, y, 130, k, liveNames, Array.IndexOf(liveVals, S.LiveTabs));
+                Lbl(f, "Живих вкладок", x, y + 4, 150, 24, k, true); var cLive = Combo(f, x + 160, y, w - 160, k, liveNames, Array.IndexOf(liveVals, S.LiveTabs)); y += 36;
                 string[] sleepNames = { "Авто", "1 хв", "2 хв", "5 хв", "15 хв", "30 хв", "60 хв" };
                 int[] sleepVals = { 0, 1, 2, 5, 15, 30, 60 };
-                Lbl(f, "Присипляти через", 310, y + 4, 120, 24, k, true); var cSleep = Combo(f, 430, y, 70, k, sleepNames, Array.IndexOf(sleepVals, S.SleepMinutes)); y += 36;
-                Lbl(f, "Легкий режим", 20, y + 4, 150, 24, k, true); var cLite = Combo(f, 170, y, 130, k, new[] { "Авто", "Увімкнено", "Вимкнено" }, S.LiteMode);
-                Lbl(f, "Відео H.264", 310, y + 4, 120, 24, k, true); var cH = Combo(f, 430, y, 70, k, new[] { "Авто", "Так", "Ні" }, S.ForceH264); y += 44;
+                Lbl(f, "Присипляти через", x, y + 4, 150, 24, k, true); var cSleep = Combo(f, x + 160, y, w - 160, k, sleepNames, Array.IndexOf(sleepVals, S.SleepMinutes)); y += 36;
+                Lbl(f, "Легкий режим", x, y + 4, 150, 24, k, true); var cLite = Combo(f, x + 160, y, w - 160, k, new[] { "Авто", "Увімкнено", "Вимкнено" }, S.LiteMode); y += 36;
+                Lbl(f, "Відео H.264", x, y + 4, 150, 24, k, true); var cH = Combo(f, x + 160, y, w - 160, k, new[] { "Авто", "Так", "Ні" }, S.ForceH264); y += 36;
+                Lbl(f, "Музика й відео у фонових вкладках грають далі — такі вкладки не присипляються.", x, y, w, 40, k, true); y += 48;
 
-                var bImport = Btn(f, "Імпорт закладок з Chrome / Edge", 20, y, 240, k);
-                var bDefault = Btn(f, "Зробити браузером за замовчуванням", 268, y, 232, k);
-                y += 44;
-                var bHist = Btn(f, "Очистити історію", 20, y, 240, k);
-                var ok = Btn(f, "Зберегти", 520 - 20 - 120, 640 - 52, 120, k, true);
+                Lbl(f, "Windows і оновлення", x, y, w, 26, k, false, h); y += 32;
+                var sUpd = Sw(f, "Автоматично перевіряти оновлення (раз на добу)", x, y, w, k, S.AutoUpdate); y += 38;
+                var bInstall = Btn(f, Installer.RunningInstalled ? "Встановлено на цей ПК ✓" : "Встановити на ПК (Пуск, ярлик)", x, y, 200, k);
+                bInstall.Enabled = !Installer.RunningInstalled;
+                var bDefault = Btn(f, "Браузер за замовчуванням", x + 210, y, 200, k); y += 42;
+                var bImport = Btn(f, "Імпорт закладок з Chrome / Edge", x, y, 200, k);
+                var bHist = Btn(f, "Очистити історію", x + 210, y, 200, k);
+
+                var ok = Btn(f, "Зберегти", 900 - 20 - 120, 560 - 52, 120, k, true);
                 ok.DialogResult = DialogResult.OK;
                 f.AcceptButton = ok;
 
@@ -456,17 +478,90 @@ namespace Beryll
                 };
                 bDefault.Click += delegate { Shell.MakeDefault(f); };
                 bHist.Click += delegate { Store.ClearHistory(); MessageBox.Show(f, "Історію очищено.", "Beryll"); };
+                bInstall.Click += delegate { f.Close(); InstallDialog(owner); };
 
                 if (f.ShowDialog(owner) != DialogResult.OK) return;
-                bool engineChange = (cLite.SelectedIndex != S.LiteMode);
+                bool restart = cLite.SelectedIndex != S.LiteMode;
+                bool maxChanged = sMax.On != S.AdBlockMax;
                 S.Search = cSearch.SelectedIndex; S.ThemeMode = cTheme.SelectedIndex; S.RestoreSession = sRestore.On; S.BookmarksBar = sBar.On;
                 S.Protection = sProt.On; S.HttpsUpgrade = sHttps.On; S.StripParams = sStrip.On; S.Gpc = sGpc.On; S.CookiePopups = sCook.On;
                 S.LiveTabs = liveVals[Math.Max(0, cLive.SelectedIndex)]; S.SleepMinutes = sleepVals[Math.Max(0, cSleep.SelectedIndex)];
-                S.LiteMode = cLite.SelectedIndex; S.ForceH264 = cH.SelectedIndex;
+                S.LiteMode = cLite.SelectedIndex; S.ForceH264 = cH.SelectedIndex; S.AutoUpdate = sUpd.On;
                 S.Save();
                 owner.Hw = HwProfile.Detect(S);
                 owner.ApplyTheme();
-                owner.ShowToast(engineChange ? "Збережено. Легкий режим застосується після перезапуску" : "Налаштування збережено");
+                if (maxChanged) owner.SetAdBlockMax(sMax.On);
+                owner.ShowToast(restart ? "Збережено. DNS / легкий режим застосуються після перезапуску Beryll" : "Налаштування збережено", 3000);
+            }
+        }
+
+        // ---------------------------------------------------------------- install into Windows
+
+        public static void InstallDialog(BrowserForm owner)
+        {
+            float k = owner.UiScale;
+            using (Form f = Base(owner, "Встановити Beryll", 460, 300))
+            {
+                var h = new Font("Segoe UI Semibold", 16f * k, FontStyle.Regular, GraphicsUnit.Pixel);
+                Lbl(f, "Встановити Beryll на цей ПК", 22, 16, 420, 30, k, false, h);
+                Lbl(f, "Без прав адміністратора, як Chrome чи Edge: у %LOCALAPPDATA%\\Programs\\Beryll, із записом у «Програми й компоненти».", 22, 52, 420, 44, k, true);
+                var sStart = Sw(f, "Меню «Пуск»", 22, 104, 416, k, true);
+                sStart.Enabled = false;
+                var sDesk = Sw(f, "Ярлик на робочому столі", 22, 138, 416, k, true);
+                var sDef = Sw(f, "Зробити браузером за замовчуванням", 22, 172, 416, k, false);
+                Lbl(f, "Закріпити на панелі завдань: після запуску клацніть правою кнопкою на значку Beryll → «Закріпити» (Windows не дозволяє програмам робити це самим).", 22, 206, 420, 44, k, true);
+                var ok = Btn(f, "Встановити", 460 - 22 - 250, 300 - 50, 130, k, true);
+                var no = Btn(f, "Скасувати", 460 - 22 - 110, 300 - 50, 110, k);
+                ok.DialogResult = DialogResult.OK; no.DialogResult = DialogResult.Cancel;
+                f.AcceptButton = ok; f.CancelButton = no;
+                if (f.ShowDialog(owner) != DialogResult.OK) return;
+                DoInstall(owner, sDesk.On, sDef.On);
+            }
+        }
+
+        public static void DoInstall(BrowserForm owner, bool desktop, bool makeDefault)
+        {
+            try
+            {
+                owner.Cursor = Cursors.WaitCursor;
+                string exe = Installer.Install(desktop);
+                owner.Cursor = Cursors.Default;
+                if (makeDefault) Shell.MakeDefault(owner);
+                if (!Installer.RunningInstalled &&
+                    Confirm(owner, "Beryll встановлено", "Beryll з'явився в меню «Пуск»" + (desktop ? " і на робочому столі" : "") + ".\n\nПерезапустити встановлену копію зараз?", "Перезапустити"))
+                {
+                    owner.S.Save();
+                    owner.Close();
+                    System.Diagnostics.Process.Start(exe);
+                }
+            }
+            catch (Exception ex)
+            {
+                owner.Cursor = Cursors.Default;
+                MessageBox.Show(owner, "Не вдалося встановити: " + ex.Message, "Beryll", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // ---------------------------------------------------------------- site permissions (camera, microphone, …)
+
+        public static bool Permission(BrowserForm owner, string host, string what, string glyph, out bool remember)
+        {
+            float k = owner.UiScale;
+            using (Form f = Base(owner, "Дозвіл для сайту", 440, 200))
+            {
+                var icon = new Label { Text = glyph, Font = new Font("Segoe MDL2 Assets", 26f * k, FontStyle.Regular, GraphicsUnit.Pixel), ForeColor = Theme.Beryl,
+                    Location = new Point((int)(20 * k), (int)(20 * k)), Size = new Size((int)(46 * k), (int)(46 * k)), TextAlign = ContentAlignment.MiddleCenter };
+                f.Controls.Add(icon);
+                Lbl(f, host, 78, 18, 340, 26, k, false, new Font("Segoe UI Semibold", 15f * k, FontStyle.Regular, GraphicsUnit.Pixel));
+                Lbl(f, "просить доступ до " + what, 78, 46, 340, 24, k);
+                var sRem = Sw(f, "Запам'ятати для цього сайту", 20, 96, 400, k, true);
+                var allow = Btn(f, "Дозволити", 440 - 20 - 250, 200 - 52, 130, k, true);
+                var deny = Btn(f, "Заблокувати", 440 - 20 - 110, 200 - 52, 110, k);
+                allow.DialogResult = DialogResult.OK; deny.DialogResult = DialogResult.Cancel;
+                f.CancelButton = deny;
+                bool ok = f.ShowDialog(owner) == DialogResult.OK;
+                remember = sRem.On;
+                return ok;
             }
         }
 
@@ -545,29 +640,41 @@ namespace Beryll
         {
             Settings S = owner.S;
             float k = owner.UiScale;
-            using (Form f = Base(owner, "Ласкаво просимо до Beryll", 500, 430))
+            using (Form f = Base(owner, "Ласкаво просимо до Beryll", 520, 560))
             {
                 var h = new Font("Segoe UI Semibold", 20f * k, FontStyle.Regular, GraphicsUnit.Pixel);
-                Lbl(f, "Вітаємо в Beryll", 24, 16, 450, 36, k, false, h);
-                Lbl(f, "Легкий приватний браузер. Ваш ПК: " + owner.Hw.TierName.ToLowerInvariant() + " — Beryll уже налаштувався під нього.", 24, 56, 450, 44, k, true);
-                Lbl(f, "Пошукова система", 24, 112, 200, 24, k);
-                var cs = Combo(f, 230, 108, 246, k, Settings.SearchNames, S.Search);
-                Lbl(f, "Тема", 24, 150, 200, 24, k);
-                var ct = Combo(f, 230, 146, 246, k, new[] { "Як у Windows", "Темна", "Світла" }, S.ThemeMode);
-                var sImp = Sw(f, "Імпортувати закладки з Chrome / Edge", 24, 196, 452, k, true);
-                var sDef = Sw(f, "Зробити Beryll браузером за замовчуванням", 24, 232, 452, k, false);
-                Lbl(f, "🛡 Захист від стеження вже увімкнено: трекери блокуються, посилання очищуються, cookie-банери відхиляються. Кнопка 🔥 — стерти все одним кліком.", 24, 276, 452, 64, k, true);
-                var ok = Btn(f, "Почати", 500 - 24 - 130, 430 - 54, 130, k, true);
+                Lbl(f, "Вітаємо в Beryll", 24, 16, 470, 36, k, false, h);
+                Lbl(f, "Легкий приватний браузер. Ваш ПК: " + owner.Hw.TierName.ToLowerInvariant() + " — Beryll уже налаштувався під нього.", 24, 56, 470, 44, k, true);
+                Lbl(f, "Пошукова система", 24, 110, 200, 24, k);
+                var cs = Combo(f, 240, 106, 256, k, Settings.SearchNames, S.Search);
+                Lbl(f, "Тема", 24, 146, 200, 24, k);
+                var ct = Combo(f, 240, 142, 256, k, new[] { "Як у Windows", "Темна", "Світла" }, S.ThemeMode);
+                int y = 188;
+                bool inst = Installer.RunningInstalled;
+                var sInst = Sw(f, inst ? "Встановлено на цей ПК ✓" : "Встановити на ПК (меню «Пуск», без адміна)", 24, y, 472, k, !inst); sInst.Enabled = !inst; y += 34;
+                var sDesk = Sw(f, "Ярлик на робочому столі", 24, y, 472, k, true); y += 34;
+                var sBar = Sw(f, "Показувати панель закладок", 24, y, 472, k, S.BookmarksBar); y += 34;
+                var sImp = Sw(f, "Імпортувати закладки з Chrome / Edge", 24, y, 472, k, true); y += 34;
+                var sMax = Sw(f, "Максимальне блокування реклами (uBlock Origin Lite, +9 МБ)", 24, y, 472, k, false); y += 34;
+                var sDef = Sw(f, "Зробити Beryll браузером за замовчуванням", 24, y, 472, k, false); y += 42;
+                Lbl(f, "Захист від стеження вже увімкнено. Кнопка-вогонь — стерти все одним кліком.", 24, y, 472, 40, k, true);
+                var ok = Btn(f, "Почати", 520 - 24 - 130, 560 - 54, 130, k, true);
                 ok.DialogResult = DialogResult.OK; f.AcceptButton = ok;
                 f.ShowDialog(owner);
-                S.Search = cs.SelectedIndex; S.ThemeMode = ct.SelectedIndex; S.Onboarded = true; S.Save();
+                S.Search = cs.SelectedIndex; S.ThemeMode = ct.SelectedIndex; S.BookmarksBar = sBar.On; S.Onboarded = true; S.Save();
                 owner.ApplyTheme();
                 if (sImp.On)
                 {
                     string from; int n = Store.ImportChromiumBookmarks(out from);
                     if (n > 0) owner.ShowToast("Імпортовано закладок: " + n);
                 }
-                if (sDef.On) Shell.MakeDefault(owner);
+                if (sMax.On) owner.SetAdBlockMax(true);
+                if (!inst && sInst.On) DoInstall(owner, sDesk.On, sDef.On);
+                else
+                {
+                    if (sDesk.On) Installer.AddDesktopShortcut();
+                    if (sDef.On) Shell.MakeDefault(owner);
+                }
             }
         }
     }
